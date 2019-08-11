@@ -14,19 +14,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package extensions
+package stacks
 
 import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	"github.com/crossplaneio/crossplane/pkg/controller/extensions/extension"
-	"github.com/crossplaneio/crossplane/pkg/controller/extensions/request"
+	"github.com/crossplaneio/crossplane/pkg/controller/stacks/request"
+	"github.com/crossplaneio/crossplane/pkg/controller/stacks/stack"
 )
 
 func init() {
 	AddToManagerFuncs = append(AddToManagerFuncs,
 		request.Add,
-		extension.Add,
+		stack.Add,
 	)
 }
 

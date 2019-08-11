@@ -4,7 +4,7 @@ metadata:
   creationTimestamp: null
   labels:
     controller-tools.k8s.io: "1.0"
-  name: extensions.extensions.crossplane.io
+  name: stacks.stacks.crossplane.io
 spec:
   additionalPrinterColumns:
   - JSONPath: .status.conditions[?(@.type=="Ready")].status
@@ -16,10 +16,10 @@ spec:
   - JSONPath: .metadata.creationTimestamp
     name: AGE
     type: date
-  group: extensions.crossplane.io
+  group: stacks.crossplane.io
   names:
-    kind: Extension
-    plural: extensions
+    kind: Stack
+    plural: stacks
   scope: Namespaced
   subresources:
     status: {}
@@ -68,14 +68,14 @@ spec:
             customresourcedefinitions:
               properties:
                 dependsOn:
-                  description: DependsOn is the list of CRDs that this extension depends
+                  description: DependsOn is the list of CRDs that this stack depends
                     on. This data drives the dependency resolution process.
                   items:
                     type: object
                   type: array
                 owns:
-                  description: Owned is the list of CRDs that this extension defines
-                    and owns
+                  description: Owned is the list of CRDs that this stack defines and
+                    owns
                   items:
                     type: object
                   type: array

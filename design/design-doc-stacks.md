@@ -8,7 +8,7 @@ This document aims to provide details about the experience and implementation fo
 ## Revisions
 
 * 1.1
-  * Renamed Extensions concept to Stacks (`Extension` code references are unaffected) [#571](https://github.com/crossplaneio/crossplane/issues/571)
+  * Renamed Stacks concept to Stacks (`Stack` code references are unaffected) [#571](https://github.com/crossplaneio/crossplane/issues/571)
   * Added additional Questions and Open Issues
 
 ## Experience
@@ -56,7 +56,7 @@ All further functionality for Crossplane (databases, buckets, etc.) could then b
 This section describes the end to end installation flow implemented by the Stack Manager:
 
 * The SM starts up with a default “source” registry (e.g. `registry.crossplane.io`) that contains packages (bundles of a Stack and its custom controllers and CRDs) published to it
-* User creates an `ExtensionRequest` instance to request a Stack be installed in the cluster, which includes everything needed to successfully run that Stack.  The `ExtensionRequest` includes:
+* User creates a `StackRequest` instance to request a Stack be installed in the cluster, which includes everything needed to successfully run that Stack.  The `StackRequest` includes:
   * an optional source registry that can be any arbitrary registry location.  If this field is not specified then the SM's default source registry will be used.
   * One of the following must be specified:
     * package name (`gitlab`) OR
@@ -64,24 +64,24 @@ This section describes the end to end installation flow implemented by the Stack
       * Note: this code path is exactly the same as dependency resolution
 * Performs dependency resolution that determines all packages/Stacks that are required by this Stack and all of its dependent Stacks
 * Pulls all necessary Stack packages from the registry
-* Unpacks them and installs all owned/defined CRDs and transforms the unpackaged content into an `Extension` CRD instance that serves as a record of the install
+* Unpacks them and installs all owned/defined CRDs and transforms the unpackaged content into a `Stack` CRD instance that serves as a record of the install
 * Starts up the custom controller so that it is in the running state
-* Marks the `ExtensionRequest` status as succeeded
+* Marks the `StackRequest` status as succeeded
 
-## `ExtensionRequest` CRD
+## `StackRequest` CRD
 
-To commence the installation of new functionality into a Crossplane cluster, an instance of the `ExtensionRequest` CRD should be created.
+To commence the installation of new functionality into a Crossplane cluster, an instance of the `StackRequest` CRD should be created.
 The SM will be watching for events on this type and it will begin the process of installing a Stack during its reconcile loop.
 
-`ExtensionRequests` can be specified by either a package name or by a CRD type.
+`StackRequests` can be specified by either a package name or by a CRD type.
 When given a CRD type, the controller will query the registry to find out what package owns that CRD and then it will download that package to proceed with the install.
 This gives more flexibility to how Stacks are installed and does not require the requestor to know what package a CRD is defined in.
 
 ```yaml
 # request to extend Crossplane with the redis package,
 # using a specific version number
-apiVersion: extensions.crossplane.io/v1alpha1
-kind: ExtensionRequest
+apiVersion: stacks.crossplane.io/v1alpha1
+kind: StackRequest
 metadata:
   name: redis-from-package
 spec:
@@ -94,8 +94,8 @@ status:
 ---
 # request to extend Crossplane with the package that defines/owns,
 # the rediscluster CRD
-apiVersion: extensions.crossplane.io/v1alpha1
-kind: ExtensionRequest
+apiVersion: stacks.crossplane.io/v1alpha1
+kind: StackRequest
 metadata:
   name: redis-from-crd
 spec:
@@ -107,21 +107,21 @@ status:
     status: "True"
 ```
 
-## `Extension` CRD
+## `Stack` CRD
 
-The `Extension` CRD serves as a record of an installed Stack (a custom controller and its CRDs).
+The `Stack` CRD serves as a record of an installed Stack (a custom controller and its CRDs).
 These records make it so that a user or system can query Crossplane and learn all of the functionality that has been installed on it as well as their statuses.
 
 Instances of this CRD can be generated from the filesystem based contents of a package, i.e. the metadata files contained inside the package.
-This can be thought of as a translation operation, where the file based content is translated into a YAML based version that is stored in the `Extension` CRD.
+This can be thought of as a translation operation, where the file based content is translated into a YAML based version that is stored in the `Stack` CRD.
 
-`Extension` CRD instances can also be created directly by a user without any knowledge of packages at all.
-They can directly create any CRDs that their Stack requires and then create an `Extension` CRD instance that describes their Stack, its custom controller, etc.
+`Stack` CRD instances can also be created directly by a user without any knowledge of packages at all.
+They can directly create any CRDs that their Stack requires and then create a `Stack` CRD instance that describes their Stack, its custom controller, etc.
 The Stack Manager will see this new instance and take the steps necessary to ensure the custom controller is running in the cluster and the Stack’s functionality is available.
 
 ```yaml
-apiVersion: extensions.crossplane.io/v1alpha1
-kind: Extension
+apiVersion: stacks.crossplane.io/v1alpha1
+kind: Stack
 metadata:
  name: redis
 spec:
@@ -200,11 +200,11 @@ It is essentially just a tarball (e.g., a container image) that packages all the
 More details will be provided when a Stack registry project is bootstrapped and launched.
 This section can be thought of as the initial thinking for the format of a Stack package to start generating discussion and iteration.
 
-As previously mentioned, after downloading and unpacking a Stack package, the Stack Manager will not only install its contents into Crossplane, but it will also translate them into an `Extension` record.
+As previously mentioned, after downloading and unpacking a Stack package, the Stack Manager will not only install its contents into Crossplane, but it will also translate them into a `Stack` record.
 
 Inside of a package, the following filesystem layout is expected:
 
-```
+```text
 .registry/
 ├── icon.jpg
 ├── app.yaml # Application metadata.
@@ -227,7 +227,7 @@ Inside of a package, the following filesystem layout is expected:
                     └── resource.yaml
 ```
 
-* `app.yaml`: This file is the general metadata and information about the Stack, such as its name, description, version, owners, etc.  This metadata will be saved in the `Extension` record's spec fields.
+* `app.yaml`: This file is the general metadata and information about the Stack, such as its name, description, version, owners, etc.  This metadata will be saved in the `Stack` record's spec fields.
 * `install.yaml`: This file contains the information for how the custom controller for the Stack should be installed into Crossplane.  Initially, only simple `Deployment` based controllers will be supported, but eventually other types of implementations will be supported as well, e.g., templates, functions/hooks, templates, a new DSL, etc.
 * `resources` directory: This directory contains all the CRDs and optional metadata about them.  These CRDs are the types that the custom controller implements the logic for.  They will be directly installed into Crossplane so that users can create instances of them to start consuming their new Stack functionality.
 * `ui-schema.yaml`: UI metadata that will be transformed and annotated according to the [Stack UI Metadata One Pager](one-pager-stack-ui-metadata.md)
@@ -271,7 +271,7 @@ links:
 - description: Website
   url: "https://upbound.io"
 - description: Source Code
-  url: "https://github.com/crossplaneio/sample-extension"
+  url: "https://github.com/crossplaneio/sample-stack"
 
 # License SPDX name: https://spdx.org/licenses/
 license: Apache-2.0
@@ -289,14 +289,14 @@ The full set of packages and Stacks that a Stack depend on will be downloaded, u
 
 ## Package Processing
 
-The process of installing a Stack involves downloading its package, extracting the package contents into its relevant CRDs and `Extension` record, and applying them to the Crossplane cluster.
+The process of installing a Stack involves downloading its package, extracting the package contents into its relevant CRDs and `Stack` record, and applying them to the Crossplane cluster.
 There are a few different options for this flow, which are described below, but a key aspect of the proposed implementation is to take advantage of the existing machinery in Kubernetes around container image download, verification, and extraction.
 This will be much more efficient and reliable than writing new code within Crossplane to do this work ourselves.
 
 Possible solutions for package processing are listed below, along with their pros and cons.
 
 * Stack package base image
-  * A base image containing the unpacking logic could be defined and all other Stack packages are based on it, e.g., `FROM crossplane-extension`
+  * A base image containing the unpacking logic could be defined and all other Stack packages are based on it, e.g., `FROM crossplane/stack`
   * The main entry point of the package would call this unpacking logic and send all artifacts to `stdout`
   * PRO: The knowledge to unpack an image is self-contained an external entity such as the SM does not need to know these details, package format is opaque to the SM.
   * CON: This likely significantly increases the size of the package if the logic is written in golang using Crossplane types for unmarshalling, increasing the KB size of the original package contents into an image that is many MB in size.
@@ -318,10 +318,10 @@ It is a good place to start and iterate over as we learn more without investing 
 ## Questions and Open Issues
 
 * Dependency resolution design: [#434](https://github.com/crossplaneio/crossplane/issues/434)
-* Updating/Upgrading Extension: [#435](https://github.com/crossplaneio/crossplane/issues/435)
-* Document how to build and publish an extension [#503](https://github.com/crossplaneio/crossplane/issues/503)
-* Support installation of extensions from private registries [#505](https://github.com/crossplaneio/crossplane/issues/505)
-* Standardize extension package format and layout [#507](https://github.com/crossplaneio/crossplane/issues/507)
-* Figure out model for crossplane core vs extensions [#531](https://github.com/crossplaneio/crossplane/issues/531)
-* Single extension should be able to install multiple controllers [#532](https://github.com/crossplaneio/crossplane/issues/532)
-* Prototype alternate extension implementations [#548](https://github.com/crossplaneio/crossplane/issues/548)
+* Updating/Upgrading Stack: [#435](https://github.com/crossplaneio/crossplane/issues/435)
+* Document how to build and publish a stack [#503](https://github.com/crossplaneio/crossplane/issues/503)
+* Support installation of stacks from private registries [#505](https://github.com/crossplaneio/crossplane/issues/505)
+* Standardize stack package format and layout [#507](https://github.com/crossplaneio/crossplane/issues/507)
+* Figure out model for crossplane core vs stacks [#531](https://github.com/crossplaneio/crossplane/issues/531)
+* Single stack should be able to install multiple controllers [#532](https://github.com/crossplaneio/crossplane/issues/532)
+* Prototype alternate stack implementations [#548](https://github.com/crossplaneio/crossplane/issues/548)

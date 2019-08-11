@@ -4,7 +4,7 @@ metadata:
   creationTimestamp: null
   labels:
     controller-tools.k8s.io: "1.0"
-  name: extensionrequests.extensions.crossplane.io
+  name: stackrequests.stacks.crossplane.io
 spec:
   additionalPrinterColumns:
   - JSONPath: .status.conditions[?(@.type=="Ready")].status
@@ -22,10 +22,10 @@ spec:
   - JSONPath: .metadata.creationTimestamp
     name: AGE
     type: date
-  group: extensions.crossplane.io
+  group: stacks.crossplane.io
   names:
-    kind: ExtensionRequest
-    plural: extensionrequests
+    kind: StackRequest
+    plural: stackrequests
   scope: Namespaced
   subresources:
     status: {}
@@ -48,26 +48,26 @@ spec:
           properties:
             crd:
               description: CustomResourceDefinition is the full name of a CRD that
-                is owned by the extension being requested. This can be a convenient
-                way of installing an extension when the desired CRD is known, but
-                the package name that contains it is not known. Either Package or
-                CustomResourceDefinition can be specified.
+                is owned by the stack being requested. This can be a convenient way
+                of installing a stack when the desired CRD is known, but the package
+                name that contains it is not known. Either Package or CustomResourceDefinition
+                can be specified.
               type: string
             package:
-              description: Package is the name of the extension package that is being
+              description: Package is the name of the stack package that is being
                 requested, e.g., myapp. Either Package or CustomResourceDefinition
                 can be specified.
               type: string
             source:
-              description: Source is the domain name for the extension registry hosting
-                the extension being requested, e.g., registry.crossplane.io
+              description: Source is the domain name for the stack registry hosting
+                the stack being requested, e.g., registry.crossplane.io
               type: string
           type: object
         status:
           properties:
-            extensionRecord:
-              type: object
             installJob:
+              type: object
+            stackRecord:
               type: object
           type: object
   version: v1alpha1

@@ -6,8 +6,8 @@
 
 ## Terms
 
-* **Stack**: A Stack is a Crossplane extension-manager managed package.  These packages may bundle one or many Crossplane applications or infrastructure provider controllers.
-* **Stacks**: Stacks could refer to more than one Crossplane extension-manager packages or the Extension-Manager system as a whole.
+* **Stack**: A Stack is a Crossplane stack-manager managed package.  These packages may bundle one or many Crossplane applications or infrastructure provider controllers.
+* **Stacks**: Stacks could refer to more than one Crossplane stack-manager packages or the Stack-Manager system as a whole.
 
 See the [Stacks Design Doc](design-doc-stacks.md) for more details about Crossplane Stacks.
 
@@ -15,7 +15,7 @@ See the [Stacks Design Doc](design-doc-stacks.md) for more details about Crosspl
 
 This document aims to provide details on the necessary metadata that will drive the UI on a configuration page with respect to Crossplane Stacks and the user configurable custom-resource fields exposed with a Stack. This is meant to be a dynamic spec that will not attempt to accommodate all potential UI elements.  This spec does not intend to be as complete as [XForms](https://en.wikipedia.org/wiki/XForms) or [HTML Forms](https://www.w3.org/TR/html52/sec-forms.html), for example.
 
-Users may choose to annotate Stack bundled CRD today with UI hints.  This proposal suggests a means for the extension manager to apply CRD annotations at install and upgrade time.  This separation provides a better developer experience preventing the need for modifying escaped, nested, quoted, YAML or JSON annotations within a CRD document while iterating over UI design.
+Users may choose to annotate Stack bundled CRD today with UI hints.  This proposal suggests a means for the stack manager to apply CRD annotations at install and upgrade time.  This separation provides a better developer experience preventing the need for modifying escaped, nested, quoted, YAML or JSON annotations within a CRD document while iterating over UI design.
 
 A YAML file named `ui-schema.yaml` is proposed for inclusion in Stacks.  This will standardize the approach Stack creators use to offer UI context to their package and offer a more engaging user experience.
 
@@ -136,7 +136,7 @@ apiVersion: apiextensions.k8s.io/v1beta1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    extensions.crossplane.io/ui-spec: {"uiSpecVersion":0.3,"uiSpec":[{"title":"Configuration","description":"Enter information specific to the configuration you wish to create.","items":[{"name":"dbReplicas","controlType":"singleInput","type":"integer","path":".spec.dbReplicas","title":"DB Replicas","description":"The number of DB Replicas","default":1,"validation":[{"minimum":1},{"maximum":3}]},{"name":"masterPassword","controlType":"singleInput","type":"password","path":".spec.masterPassword","title":"DB Master Password","description":"The master DB password. Must be between 8-32 characters long"},{"name":"subdomain","controlType":"singleInput","type":"string","path":".spec.subdomain","title":"Subdomain","pattern":"^([A-Za-z0-9](?:(?:[-A-Za-z0-9]){0,61}[A-Za-z0-9])?){2,62}$","description":"Enter a value for your subdomain. It cannot start or end with a dash and must be between 2-62 characters long","validation":[{"minLength":2},{"maxLength":62}]},{"name":"instanceSize","controlType":"singleSelect","path":".spec.instanceSize","title":"Instance Size","enum":["Option-1","Option-2","Option-3"],"validation":[{"required":true,"customError":"You must select an instance size for your configuration!"}]}]}]}
+    stacks.crossplane.io/ui-spec: {"uiSpecVersion":0.3,"uiSpec":[{"title":"Configuration","description":"Enter information specific to the configuration you wish to create.","items":[{"name":"dbReplicas","controlType":"singleInput","type":"integer","path":".spec.dbReplicas","title":"DB Replicas","description":"The number of DB Replicas","default":1,"validation":[{"minimum":1},{"maximum":3}]},{"name":"masterPassword","controlType":"singleInput","type":"password","path":".spec.masterPassword","title":"DB Master Password","description":"The master DB password. Must be between 8-32 characters long"},{"name":"subdomain","controlType":"singleInput","type":"string","path":".spec.subdomain","title":"Subdomain","pattern":"^([A-Za-z0-9](?:(?:[-A-Za-z0-9]){0,61}[A-Za-z0-9])?){2,62}$","description":"Enter a value for your subdomain. It cannot start or end with a dash and must be between 2-62 characters long","validation":[{"minLength":2},{"maxLength":62}]},{"name":"instanceSize","controlType":"singleSelect","path":".spec.instanceSize","title":"Instance Size","enum":["Option-1","Option-2","Option-3"],"validation":[{"required":true,"customError":"You must select an instance size for your configuration!"}]}]}]}
   creationTimestamp: null
   labels:
     controller-tools.k8s.io: "1.0"

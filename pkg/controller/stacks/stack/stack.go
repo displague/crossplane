@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package extension
+package stack
 
 import (
 	"context"
@@ -37,13 +37,13 @@ import (
 	"github.com/pkg/errors"
 
 	corev1alpha1 "github.com/crossplaneio/crossplane/pkg/apis/core/v1alpha1"
-	"github.com/crossplaneio/crossplane/pkg/apis/extensions/v1alpha1"
+	"github.com/crossplaneio/crossplane/pkg/apis/stacks/v1alpha1"
 	"github.com/crossplaneio/crossplane/pkg/logging"
 	"github.com/crossplaneio/crossplane/pkg/meta"
 )
 
 const (
-	controllerName = "extension.extensions.crossplane.io"
+	controllerName = "stack.stacks.crossplane.io"
 
 	reconcileTimeout      = 1 * time.Minute
 	requeueAfterOnSuccess = 10 * time.Second
@@ -61,12 +61,12 @@ type Reconciler struct {
 	factory
 }
 
-// Add creates a new Extension Controller and adds it to the Manager with default RBAC.
+// Add creates a new Stack Controller and adds it to the Manager with default RBAC.
 // The Manager will set fields on the Controller and Start it when the Manager is Started.
 func Add(mgr manager.Manager) error {
 	r := &Reconciler{
 		kube:    mgr.GetClient(),
-		factory: &extensionHandlerFactory{},
+		factory: &stackHandlerFactory{},
 	}
 
 	// Create a new controller
@@ -75,20 +75,20 @@ func Add(mgr manager.Manager) error {
 		return err
 	}
 
-	// Watch for changes to Extension
-	return c.Watch(&source.Kind{Type: &v1alpha1.Extension{}}, &controllerHandler.EnqueueRequestForObject{})
+	// Watch for changes to Stack
+	return c.Watch(&source.Kind{Type: &v1alpha1.Stack{}}, &controllerHandler.EnqueueRequestForObject{})
 }
 
-// Reconcile reads that state of the Extension for a Instance object and makes changes based on the state read
+// Reconcile reads that state of the Stack for a Instance object and makes changes based on the state read
 // and what is in the Instance.Spec
 func (r *Reconciler) Reconcile(req reconcile.Request) (reconcile.Result, error) {
-	log.V(logging.Debug).Info("reconciling", "kind", v1alpha1.ExtensionKindAPIVersion, "request", req)
+	log.V(logging.Debug).Info("reconciling", "kind", v1alpha1.StackKindAPIVersion, "request", req)
 
 	ctx, cancel := context.WithTimeout(context.Background(), reconcileTimeout)
 	defer cancel()
 
 	// fetch the CRD instance
-	i := &v1alpha1.Extension{}
+	i := &v1alpha1.Stack{}
 	if err := r.kube.Get(ctx, req.NamespacedName, i); err != nil {
 		if kerrors.IsNotFound(err) {
 			return reconcile.Result{}, nil
@@ -107,19 +107,19 @@ type handler interface {
 	update(context.Context) (reconcile.Result, error)
 }
 
-type extensionHandler struct {
+type stackHandler struct {
 	kube client.Client
-	ext  *v1alpha1.Extension
+	ext  *v1alpha1.Stack
 }
 
 type factory interface {
-	newHandler(context.Context, *v1alpha1.Extension, client.Client) handler
+	newHandler(context.Context, *v1alpha1.Stack, client.Client) handler
 }
 
-type extensionHandlerFactory struct{}
+type stackHandlerFactory struct{}
 
-func (f *extensionHandlerFactory) newHandler(ctx context.Context, ext *v1alpha1.Extension, kube client.Client) handler {
-	return &extensionHandler{
+func (f *stackHandlerFactory) newHandler(ctx context.Context, ext *v1alpha1.Stack, kube client.Client) handler {
+	return &stackHandler{
 		kube: kube,
 		ext:  ext,
 	}
@@ -128,7 +128,7 @@ func (f *extensionHandlerFactory) newHandler(ctx context.Context, ext *v1alpha1.
 // ************************************************************************************************
 // Syncing/Creating functions
 // ************************************************************************************************
-func (h *extensionHandler) sync(ctx context.Context) (reconcile.Result, error) {
+func (h *stackHandler) sync(ctx context.Context) (reconcile.Result, error) {
 	if h.ext.Status.ControllerRef == nil {
 		return h.create(ctx)
 	}
@@ -136,7 +136,7 @@ func (h *extensionHandler) sync(ctx context.Context) (reconcile.Result, error) {
 	return h.update(ctx)
 }
 
-func (h *extensionHandler) create(ctx context.Context) (reconcile.Result, error) {
+func (h *stackHandler) create(ctx context.Context) (reconcile.Result, error) {
 	h.ext.Status.SetConditions(corev1alpha1.Creating())
 
 	// create RBAC permissions
@@ -153,22 +153,22 @@ func (h *extensionHandler) create(ctx context.Context) (reconcile.Result, error)
 		return fail(ctx, h.kube, h.ext, err)
 	}
 
-	// the extension has successfully been created, the extension is ready
+	// the stack has successfully been created, the stack is ready
 	h.ext.Status.SetConditions(corev1alpha1.Available(), corev1alpha1.ReconcileSuccess())
 	return requeueOnSuccess, h.kube.Status().Update(ctx, h.ext)
 }
 
-func (h *extensionHandler) update(ctx context.Context) (reconcile.Result, error) {
-	log.V(logging.Debug).Info("updating not supported yet", "extension", h.ext.Name)
+func (h *stackHandler) update(ctx context.Context) (reconcile.Result, error) {
+	log.V(logging.Debug).Info("updating not supported yet", "stack", h.ext.Name)
 	return reconcile.Result{}, nil
 }
 
-func (h *extensionHandler) processRBAC(ctx context.Context) error {
+func (h *stackHandler) processRBAC(ctx context.Context) error {
 	if len(h.ext.Spec.Permissions.Rules) == 0 {
 		return nil
 	}
 
-	owner := meta.AsOwner(meta.ReferenceTo(h.ext, v1alpha1.ExtensionGroupVersionKind))
+	owner := meta.AsOwner(meta.ReferenceTo(h.ext, v1alpha1.StackGroupVersionKind))
 
 	// create service account
 	sa := &corev1.ServiceAccount{
@@ -212,17 +212,17 @@ func (h *extensionHandler) processRBAC(ctx context.Context) error {
 	return nil
 }
 
-func (h *extensionHandler) processDeployment(ctx context.Context) error {
+func (h *stackHandler) processDeployment(ctx context.Context) error {
 	controllerDeployment := h.ext.Spec.Controller.Deployment
 	if controllerDeployment == nil {
 		return nil
 	}
 
-	// ensure the deployment is set to use this extension's service account that we created
+	// ensure the deployment is set to use this stack's service account that we created
 	deploymentSpec := *controllerDeployment.Spec.DeepCopy()
 	deploymentSpec.Template.Spec.ServiceAccountName = h.ext.Name
 
-	ref := meta.AsOwner(meta.ReferenceTo(h.ext, v1alpha1.ExtensionGroupVersionKind))
+	ref := meta.AsOwner(meta.ReferenceTo(h.ext, v1alpha1.StackGroupVersionKind))
 	gvk := schema.GroupVersionKind{
 		Group:   apps.GroupName,
 		Kind:    "Deployment",
@@ -241,23 +241,23 @@ func (h *extensionHandler) processDeployment(ctx context.Context) error {
 		return errors.Wrap(err, "failed to create deployment")
 	}
 
-	// save a reference to the extension's controller
+	// save a reference to the stack's controller
 	h.ext.Status.ControllerRef = meta.ReferenceTo(d, gvk)
 
 	return nil
 }
 
-func (h *extensionHandler) processJob(ctx context.Context) error {
+func (h *stackHandler) processJob(ctx context.Context) error {
 	controllerJob := h.ext.Spec.Controller.Job
 	if controllerJob == nil {
 		return nil
 	}
 
-	// ensure the job is set to use this extension's service account that we created
+	// ensure the job is set to use this stack's service account that we created
 	jobSpec := *controllerJob.Spec.DeepCopy()
 	jobSpec.Template.Spec.ServiceAccountName = h.ext.Name
 
-	ref := meta.AsOwner(meta.ReferenceTo(h.ext, v1alpha1.ExtensionGroupVersionKind))
+	ref := meta.AsOwner(meta.ReferenceTo(h.ext, v1alpha1.StackGroupVersionKind))
 	gvk := schema.GroupVersionKind{
 		Group:   batch.GroupName,
 		Kind:    "Job",
@@ -275,15 +275,15 @@ func (h *extensionHandler) processJob(ctx context.Context) error {
 		return errors.Wrap(err, "failed to create job")
 	}
 
-	// save a reference to the extension's controller
+	// save a reference to the stack's controller
 	h.ext.Status.ControllerRef = meta.ReferenceTo(j, gvk)
 
 	return nil
 }
 
 // fail - helper function to set fail condition with reason and message
-func fail(ctx context.Context, kube client.StatusClient, i *v1alpha1.Extension, err error) (reconcile.Result, error) {
-	log.V(logging.Debug).Info("failed extension", "i", i.Name, "error", err)
+func fail(ctx context.Context, kube client.StatusClient, i *v1alpha1.Stack, err error) (reconcile.Result, error) {
+	log.V(logging.Debug).Info("failed stack", "i", i.Name, "error", err)
 	i.Status.SetConditions(corev1alpha1.ReconcileError(err))
 	return resultRequeue, kube.Status().Update(ctx, i)
 }

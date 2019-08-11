@@ -924,8 +924,8 @@ etc.
 [9]: https://github.com/kubernetes/community/blob/a6dcf86/contributors/design-proposals/api-machinery/controller-ref.md#the-three-laws-of-controllers
 [10]: https://github.com/kubernetes/community/blob/a6dcf86/contributors/design-proposals/api-machinery/controller-ref.md#adoption
 [11]: https://godoc.org/k8s.io/apimachinery/pkg/apis/meta/v1#OwnerReference
-[12]: https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/
-[13]: https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/#advanced-features-and-flexibility
+[12]: https://kubernetes.io/docs/concepts/extend-kubernetes/api-stack/custom-resources/
+[13]: https://kubernetes.io/docs/concepts/extend-kubernetes/api-stack/custom-resources/#advanced-features-and-flexibility
 [14]: https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/#validatingadmissionwebhook
 [15]: https://github.com/kubernetes-sigs/controller-runtime/issues/399
 [16]: https://godoc.org/k8s.io/api/admission/v1beta1#AdmissionRequest

@@ -14,8 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package extensions contains Kubernetes API groups for Crossplane extensions.
-package extensions
+// Package stacks contains Kubernetes API groups for Crossplane stacks.
+package stacks
 
 import (
 	"testing"
@@ -23,7 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/crossplaneio/crossplane/pkg/apis/extensions/v1alpha1"
+	"github.com/crossplaneio/crossplane/pkg/apis/stacks/v1alpha1"
 )
 
 func TestAddToScheme(t *testing.T) {
