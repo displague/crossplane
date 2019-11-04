@@ -18,6 +18,7 @@ package stack
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pkg/errors"
@@ -40,7 +41,8 @@ import (
 )
 
 const (
-	controllerName = "stack.stacks.crossplane.io"
+	controllerName     = "stack.stacks.crossplane.io"
+	clusterRoleNameFmt = "%s:%s:%s:%s"
 
 	reconcileTimeout      = 1 * time.Minute
 	requeueAfterOnSuccess = 10 * time.Second
@@ -160,19 +162,27 @@ func (h *stackHandler) update(ctx context.Context) (reconcile.Result, error) {
 	return reconcile.Result{}, nil
 }
 
-func (h *stackHandler) createNamespacedRoleBinding(ctx context.Context, owner metav1.OwnerReference) error {
-	cr := &rbac.Role{
+func (h *stackHandler) createClusterRole(ctx context.Context, owner metav1.OwnerReference) (string, error) {
+	if h.ext.Spec.Source == "system" {
+		return "", errors.New("'system' is an invalid stack source")
+	}
+	name := fmt.Sprintf(clusterRoleNameFmt, h.ext.Spec.Source, h.ext.GetName(), h.ext.Spec.Version, "system")
+	cr := &rbac.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:            h.ext.Name,
-			Namespace:       h.ext.Namespace,
+			Name:            name,
 			OwnerReferences: []metav1.OwnerReference{owner},
 		},
 		Rules: h.ext.Spec.Permissions.Rules,
 	}
+
 	if err := h.kube.Create(ctx, cr); err != nil && !kerrors.IsAlreadyExists(err) {
-		return errors.Wrap(err, "failed to create role")
+		return "", errors.Wrap(err, "failed to create cluster role")
 	}
 
+	return name, nil
+}
+
+func (h *stackHandler) createNamespacedRoleBinding(ctx context.Context, clusterRoleName string, owner metav1.OwnerReference) error {
 	// create rolebinding between service account and role
 	crb := &rbac.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
@@ -180,7 +190,7 @@ func (h *stackHandler) createNamespacedRoleBinding(ctx context.Context, owner me
 			Namespace:       h.ext.Namespace,
 			OwnerReferences: []metav1.OwnerReference{owner},
 		},
-		RoleRef: rbac.RoleRef{APIGroup: rbac.GroupName, Kind: "Role", Name: h.ext.Name},
+		RoleRef: rbac.RoleRef{APIGroup: rbac.GroupName, Kind: "Role", Name: clusterRoleName},
 		Subjects: []rbac.Subject{
 			{Name: h.ext.Name, Namespace: h.ext.Namespace, Kind: rbac.ServiceAccountKind},
 		},
@@ -191,26 +201,14 @@ func (h *stackHandler) createNamespacedRoleBinding(ctx context.Context, owner me
 	return nil
 }
 
-func (h *stackHandler) createClusterRoleBinding(ctx context.Context, owner metav1.OwnerReference) error {
-	cr := &rbac.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:            h.ext.Name,
-			OwnerReferences: []metav1.OwnerReference{owner},
-		},
-		Rules: h.ext.Spec.Permissions.Rules,
-	}
-
-	if err := h.kube.Create(ctx, cr); err != nil && !kerrors.IsAlreadyExists(err) {
-		return errors.Wrap(err, "failed to create cluster role")
-	}
-
+func (h *stackHandler) createClusterRoleBinding(ctx context.Context, clusterRoleName string, owner metav1.OwnerReference) error {
 	// create clusterrolebinding between service account and role
 	crb := &rbac.ClusterRoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            h.ext.Name,
 			OwnerReferences: []metav1.OwnerReference{owner},
 		},
-		RoleRef: rbac.RoleRef{APIGroup: rbac.GroupName, Kind: "ClusterRole", Name: h.ext.Name},
+		RoleRef: rbac.RoleRef{APIGroup: rbac.GroupName, Kind: "ClusterRole", Name: clusterRoleName},
 		Subjects: []rbac.Subject{
 			{Name: h.ext.Name, Namespace: h.ext.Namespace, Kind: rbac.ServiceAccountKind},
 		},
@@ -241,11 +239,16 @@ func (h *stackHandler) processRBAC(ctx context.Context) error {
 		return errors.Wrap(err, "failed to create service account")
 	}
 
+	clusterRoleName, err := h.createClusterRole(ctx, owner)
+	if err != nil {
+		return errors.Wrap(err, "failed to create cluster role")
+	}
+
 	switch apiextensions.ResourceScope(h.ext.Spec.PermissionScope) {
 	case apiextensions.ClusterScoped:
-		return h.createClusterRoleBinding(ctx, owner)
+		return h.createClusterRoleBinding(ctx, clusterRoleName, owner)
 	case "", apiextensions.NamespaceScoped:
-		return h.createNamespacedRoleBinding(ctx, owner)
+		return h.createNamespacedRoleBinding(ctx, clusterRoleName, owner)
 	}
 
 	return errors.New("invalid permissionScope for stack")
