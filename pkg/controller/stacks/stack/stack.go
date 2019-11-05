@@ -171,6 +171,16 @@ func (h *stackHandler) createClusterRole(ctx context.Context, owner metav1.Owner
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            name,
 			OwnerReferences: []metav1.OwnerReference{owner},
+			Labels: map[string]string{
+				"rbac.crossplane.io/role-namespace": fmt.Sprintf("%t", h.isNamespaced()),
+			},
+		},
+		AggregationRule: &rbac.AggregationRule{
+			ClusterRoleSelectors: []metav1.LabelSelector{{
+				MatchLabels: map[string]string{
+					"rbac.crossplane.io/aggregate-to-crossplane-admin": "true",
+				},
+			}},
 		},
 		Rules: h.ext.Spec.Permissions.Rules,
 	}
@@ -252,6 +262,10 @@ func (h *stackHandler) processRBAC(ctx context.Context) error {
 	}
 
 	return errors.New("invalid permissionScope for stack")
+}
+
+func (h *stackHandler) isNamespaced() bool {
+	return apiextensions.ResourceScope(h.ext.Spec.PermissionScope) == apiextensions.NamespaceScoped
 }
 
 func (h *stackHandler) processDeployment(ctx context.Context) error {
