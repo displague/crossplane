@@ -63,8 +63,9 @@ func main() {
 		stackCmd = app.Command("stack", "Perform operations on stacks")
 
 		// stack manage - adds the stack manager controllers and starts their reconcile loops
-		stackManageCmd     = stackCmd.Command("manage", "Manage stacks (run stack manager controllers)")
-		supportTemplates = stackManageCmd.Flag("templates", "Enable support for template stacks").Bool()
+		stackManageCmd       = stackCmd.Command("manage", "Manage stacks (run stack manager controllers)")
+		stackManageGroups    = stackManageCmd.Flag("allowed-groups", "A comma separated list of GVK groups that Stacks may depend on. When omitted, all groups are permitted.").Default("").String()
+		stackManageTemplates = stackManageCmd.Flag("templates", "Enable support for template stacks").Bool()
 
 		// stack unpack - performs the unpacking operation for the given stack package content
 		// directory. This command is expected to parse the content and generate manifests for stack
@@ -77,6 +78,7 @@ func main() {
 		stackUnpackDir             = stackUnpackCmd.Flag("content-dir", "The absolute path of the directory that contains the stack contents").Required().String()
 		stackUnpackOutfile         = stackUnpackCmd.Flag("outfile", "The file where the YAML Stack record and CRD artifacts will be written").String()
 		stackUnpackPermissionScope = stackUnpackCmd.Flag("permission-scope", "The permission-scope that the stack must request (Namespaced, Cluster)").Default("Namespaced").String()
+		stackUnpackGroups          = stackUnpackCmd.Flag("allowed-groups", "A comma separated list of GVK groups that Stacks may depend on. When omitted, all groups are permitted.").Default("").String()
 	)
 	cmd := kingpin.MustParse(app.Parse(os.Args[1:]))
 
@@ -107,10 +109,14 @@ func main() {
 
 		mgr := setupManager(log, syncPeriod)
 
-		log.Info("Adding controllers")
-		kingpin.FatalIfError(stacksControllerSetupWithManager(mgr), "Cannot add controllers to manager")
+		if *stackManageGroups > "" {
+			log.Info("Restricting Stack dependsOn types to: %q", stackManageGroups)
+		}
 
-		if *supportTemplates {
+		log.Info("Adding controllers")
+		kingpin.FatalIfError(stacksControllerSetupWithManager(mgr, *stackManageGroups), "Cannot add controllers to manager")
+
+		if *stackManageTemplates {
 			log.Info("Adding template controllers")
 			kingpin.FatalIfError(stacksTemplateControllerSetupWithManager(mgr), "Cannot add template controllers to manager")
 		}
@@ -133,7 +139,7 @@ func main() {
 		// TODO(displague) afero.NewBasePathFs could avoid the need to track Base
 		fs := afero.NewOsFs()
 		rd := &walker.ResourceDir{Base: filepath.Clean(*stackUnpackDir), Walker: afero.Afero{Fs: fs}}
-		kingpin.FatalIfError(stacks.Unpack(rd, outFile, rd.Base, *stackUnpackPermissionScope), "failed to unpack stacks")
+		kingpin.FatalIfError(stacks.Unpack(rd, outFile, rd.Base, *stackUnpackPermissionScope, *stackUnpackGroups), "failed to unpack stacks")
 	default:
 		kingpin.FatalUsage("unknown command %s", cmd)
 	}
@@ -168,8 +174,8 @@ func controllerSetupWithManager(mgr manager.Manager) error {
 	return c.SetupWithManager(mgr)
 }
 
-func stacksControllerSetupWithManager(mgr manager.Manager) error {
-	c := stacksController.Controllers{}
+func stacksControllerSetupWithManager(mgr manager.Manager, allowedGroups string) error {
+	c := stacksController.Controllers{AllowedGroups: allowedGroups}
 	return c.SetupWithManager(mgr)
 }
 

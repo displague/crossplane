@@ -25,7 +25,9 @@ import (
 )
 
 // Controllers passes down config and adds individual controllers to the manager.
-type Controllers struct{}
+type Controllers struct {
+	AllowedGroups string
+}
 
 // SetupWithManager adds all Stack controllers to the manager.
 func (c *Controllers) SetupWithManager(mgr ctrl.Manager) error {
@@ -36,11 +38,13 @@ func (c *Controllers) SetupWithManager(mgr ctrl.Manager) error {
 	for _, creator := range creators {
 		if err := (&install.Controller{
 			StackInstallCreator: creator,
+			AllowedGroups:       c.AllowedGroups,
 		}).SetupWithManager(mgr); err != nil {
 			return err
 		}
 	}
 
+	// TODO(displague) Stack could enforce allowed-groups too
 	if err := (&stack.Controller{}).SetupWithManager(mgr); err != nil {
 		return err
 	}

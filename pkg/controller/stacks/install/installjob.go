@@ -59,7 +59,7 @@ type stackInstallJobCompleter struct {
 	podLogReader Reader
 }
 
-func createInstallJob(i v1alpha1.StackInstaller, executorInfo *stacks.ExecutorInfo) *batchv1.Job {
+func createInstallJob(i v1alpha1.StackInstaller, executorInfo *stacks.ExecutorInfo, allowedGroups string) *batchv1.Job {
 	ref := meta.AsOwner(meta.ReferenceTo(i, i.GroupVersionKind()))
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -97,6 +97,7 @@ func createInstallJob(i v1alpha1.StackInstaller, executorInfo *stacks.ExecutorIn
 								"unpack",
 								fmt.Sprintf("--content-dir=%s", filepath.Join("/ext-pkg", registryDirName)),
 								"--permission-scope=" + i.PermissionScope(),
+								"--allowed-groups=" + allowedGroups,
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{

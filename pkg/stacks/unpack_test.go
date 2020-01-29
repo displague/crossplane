@@ -1100,6 +1100,7 @@ spec:
 status:
   conditionedStatus: {}
 `
+	allowAllGroups = ""
 )
 
 var (
@@ -1328,7 +1329,7 @@ func TestUnpack(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := &bytes.Buffer{}
 			rd := &walker.ResourceDir{Base: tt.root, Walker: afero.Afero{Fs: tt.fs}}
-			err := Unpack(rd, got, tt.root, "Namespaced")
+			err := Unpack(rd, got, tt.root, "Namespaced", allowAllGroups)
 
 			if diff := cmp.Diff(tt.want.err, err, test.EquateErrors()); diff != "" {
 				t.Errorf("Unpack() -want error, +got error:\n%s", diff)
@@ -1400,7 +1401,7 @@ func TestUnpackCluster(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := &bytes.Buffer{}
 			rd := &walker.ResourceDir{Base: tt.root, Walker: afero.Afero{Fs: tt.fs}}
-			err := Unpack(rd, got, tt.root, "Cluster")
+			err := Unpack(rd, got, tt.root, "Cluster", allowAllGroups)
 
 			if diff := cmp.Diff(tt.want.err, err, test.EquateErrors()); diff != "" {
 				t.Errorf("Unpack() -want error, +got error:\n%s", diff)
@@ -1438,6 +1439,61 @@ func TestOrderStackIconKeys(t *testing.T) {
 			got := orderStackIconKeys(tt.args.m)
 			if diff := cmp.Diff(tt.want, got); diff != "" {
 				t.Errorf("orderStackIconKeys(): -want, +got:\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestPermittedGroup(t *testing.T) {
+	type args struct {
+		group     string
+		permitted []string
+	}
+
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{
+			name: "AllPermitted",
+			args: args{
+				group:     "anything",
+				permitted: []string{},
+			},
+			want: true,
+		},
+		{
+			name: "PermittedMiss",
+			args: args{
+				group:     "a",
+				permitted: []string{"b", "c"},
+			},
+			want: false,
+		},
+		{
+			name: "PermittedHit",
+			args: args{
+				group:     "a",
+				permitted: []string{"a", "b", "c"},
+			},
+			want: true,
+		},
+		{
+			name: "PermittedHitLate",
+			args: args{
+				group:     "c",
+				permitted: []string{"a", "b", "c"},
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := permittedGroup(tt.args.group, tt.args.permitted)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("permittedGroup(): -want, +got:\n%s", diff)
 			}
 		})
 	}

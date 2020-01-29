@@ -370,7 +370,7 @@ func generateRBAC(apiKinds []string, apiGroup string) rbacv1.PolicyRule {
 }
 
 // applyRules adds RBAC rules to the Stack for standard Stack needs and to fulfill dependencies
-func (sp *StackPackage) applyRules() error {
+func (sp *StackPackage) applyRules(allowedGroups []string) error {
 	core := rbacv1.PolicyRule{
 		APIGroups:     []string{""},
 		ResourceNames: []string{},
@@ -383,7 +383,22 @@ func (sp *StackPackage) applyRules() error {
 		core,
 	}}
 
-	// owned CRD rules
+	owned := sp.ownedCRDRules()
+	dependent, err := sp.dependentCRDRules(allowedGroups)
+	if err != nil {
+		return err
+	}
+
+	rbac.Rules = append(rbac.Rules, append(owned, dependent...)...)
+
+	sp.SetRBAC(rbac)
+	return nil
+}
+
+// ownedCRDRules returns PolicyRules for access to "Owned" Stack CRDs
+func (sp *StackPackage) ownedCRDRules() []rbacv1.PolicyRule {
+	rules := []rbacv1.PolicyRule{}
+
 	orderedKeys := orderStackCRDKeys(sp.CRDs)
 	for _, k := range orderedKeys {
 		crd := sp.CRDs[k]
@@ -398,10 +413,15 @@ func (sp *StackPackage) applyRules() error {
 			}
 		}
 		rule := generateRBAC(kinds, crd.Spec.Group)
-		rbac.Rules = append(rbac.Rules, rule)
+		rules = append(rules, rule)
 	}
+	return rules
+}
 
-	// dependency based rules
+// dependentCRDRules returns PolicyRules for access to "DependsOn" Stack CRDs
+func (sp *StackPackage) dependentCRDRules(allowedGroups []string) ([]rbacv1.PolicyRule, error) {
+	rules := []rbacv1.PolicyRule{}
+
 	for _, dependency := range sp.Stack.Spec.DependsOn {
 		crd := dependency.CustomResourceDefinition
 		if crd != "" {
@@ -413,15 +433,34 @@ func (sp *StackPackage) applyRules() error {
 
 			gk := schema.ParseGroupKind(crd)
 			if gk.Group == "" || gk.Kind == "" {
-				return errors.New(fmt.Sprintf("cannot parse CustomResourceDefinition %q as Kind and Group", crd))
+				return nil, errors.New(fmt.Sprintf("cannot parse CustomResourceDefinition %q as Kind and Group", crd))
 			}
+			if !permittedGroup(gk.Group, allowedGroups) {
+				return nil, errors.New(fmt.Sprintf("Group %q is not permitted for use as a dependency (%v are allowed)", gk.Group, allowedGroups))
+			}
+
 			rule := generateRBAC([]string{gk.Kind}, gk.Group)
-			rbac.Rules = append(rbac.Rules, rule)
+			rules = append(rules, rule)
+		}
+	}
+	return rules, nil
+
+}
+
+// permittedGroup determines if a group is acceptable given permitted groups
+// Returns true when group is found in groups or when groups is empty
+func permittedGroup(group string, permitted []string) bool {
+	if len(permitted) == 0 {
+		return true
+	}
+
+	for _, g := range permitted {
+		if g == group {
+			return true
 		}
 	}
 
-	sp.SetRBAC(rbac)
-	return nil
+	return false
 }
 
 // NewStackPackage returns a StackPackage with maps created
@@ -455,7 +494,7 @@ func NewStackPackage(baseDir string) *StackPackage {
 //
 // baseDir is expected to be an absolute path, i.e. have a root to the path,
 // at the very least "/".
-func Unpack(rw walker.ResourceWalker, out io.StringWriter, baseDir string, permissionScope string) error {
+func Unpack(rw walker.ResourceWalker, out io.StringWriter, baseDir string, permissionScope string, allowedGroups string) error {
 	log.V(logging.Debug).Info("Unpacking stack")
 
 	sp := NewStackPackage(filepath.Clean(baseDir))
@@ -483,7 +522,12 @@ func Unpack(rw walker.ResourceWalker, out io.StringWriter, baseDir string, permi
 		return errors.New(fmt.Sprintf("Stack permissionScope %q is not permitted by unpack invocation parameters (expected %q)", sp.Stack.Spec.PermissionScope, permissionScope))
 	}
 
-	if err := sp.applyRules(); err != nil {
+	var groups []string
+	if allowedGroups != "" {
+		groups = strings.Split(allowedGroups, ",")
+	}
+
+	if err := sp.applyRules(groups); err != nil {
 		return err
 	}
 

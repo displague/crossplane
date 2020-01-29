@@ -47,6 +47,7 @@ const (
 	uid               = types.UID(uidString)
 	resourceName      = "cool-stackinstall"
 	stackPackageImage = "cool/stack-package:rad"
+	allowAllGroups    = ""
 )
 
 var (
@@ -123,12 +124,12 @@ func clusterInstallResource(rm ...resourceModifier) *v1alpha1.ClusterStackInstal
 
 // mock implementations
 type mockFactory struct {
-	MockNewHandler func(context.Context, v1alpha1.StackInstaller, client.Client, kubernetes.Interface, *stacks.ExecutorInfo) handler
+	MockNewHandler func(context.Context, v1alpha1.StackInstaller, client.Client, kubernetes.Interface, *stacks.ExecutorInfo, string) handler
 }
 
 func (f *mockFactory) newHandler(ctx context.Context, i v1alpha1.StackInstaller,
-	kube client.Client, kubeclient kubernetes.Interface, ei *stacks.ExecutorInfo) handler {
-	return f.MockNewHandler(ctx, i, kube, kubeclient, ei)
+	kube client.Client, kubeclient kubernetes.Interface, ei *stacks.ExecutorInfo, g string) handler {
+	return f.MockNewHandler(ctx, i, kube, kubeclient, ei, g)
 }
 
 type mockHandler struct {
@@ -191,7 +192,7 @@ func TestReconcile(t *testing.T) {
 					},
 				},
 				factory: &mockFactory{
-					MockNewHandler: func(context.Context, v1alpha1.StackInstaller, client.Client, kubernetes.Interface, *stacks.ExecutorInfo) handler {
+					MockNewHandler: func(context.Context, v1alpha1.StackInstaller, client.Client, kubernetes.Interface, *stacks.ExecutorInfo, string) handler {
 						return &mockHandler{
 							MockSync: func(context.Context) (reconcile.Result, error) {
 								return reconcile.Result{}, nil
@@ -219,7 +220,7 @@ func TestReconcile(t *testing.T) {
 					},
 				},
 				factory: &mockFactory{
-					MockNewHandler: func(context.Context, v1alpha1.StackInstaller, client.Client, kubernetes.Interface, *stacks.ExecutorInfo) handler {
+					MockNewHandler: func(context.Context, v1alpha1.StackInstaller, client.Client, kubernetes.Interface, *stacks.ExecutorInfo, string) handler {
 						return &mockHandler{
 							MockSync: func(context.Context) (reconcile.Result, error) {
 								return reconcile.Result{}, nil
@@ -247,7 +248,7 @@ func TestReconcile(t *testing.T) {
 					},
 				},
 				factory: &mockFactory{
-					MockNewHandler: func(context.Context, v1alpha1.StackInstaller, client.Client, kubernetes.Interface, *stacks.ExecutorInfo) handler {
+					MockNewHandler: func(context.Context, v1alpha1.StackInstaller, client.Client, kubernetes.Interface, *stacks.ExecutorInfo, string) handler {
 						return &mockHandler{
 							MockDelete: func(context.Context) (reconcile.Result, error) {
 								return reconcile.Result{}, nil
@@ -255,6 +256,7 @@ func TestReconcile(t *testing.T) {
 						}
 					},
 				},
+				allowedGroups: allowAllGroups,
 			},
 			want: want{result: reconcile.Result{}, err: nil},
 		},
@@ -503,17 +505,18 @@ func TestHandlerFactory(t *testing.T) {
 			name:    "SimpleCreate",
 			factory: &handlerFactory{},
 			want: &stackInstallHandler{
-				kube:         nil,
-				jobCompleter: &stackInstallJobCompleter{client: nil, podLogReader: &K8sReader{Client: nil}},
-				executorInfo: &stacks.ExecutorInfo{Image: stackPackageImage},
-				ext:          resource(),
+				kube:          nil,
+				jobCompleter:  &stackInstallJobCompleter{client: nil, podLogReader: &K8sReader{Client: nil}},
+				executorInfo:  &stacks.ExecutorInfo{Image: stackPackageImage},
+				ext:           resource(),
+				allowedGroups: allowAllGroups,
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.factory.newHandler(ctx, resource(), nil, nil, &stacks.ExecutorInfo{Image: stackPackageImage})
+			got := tt.factory.newHandler(ctx, resource(), nil, nil, &stacks.ExecutorInfo{Image: stackPackageImage}, allowAllGroups)
 
 			diff := cmp.Diff(tt.want, got,
 				cmp.AllowUnexported(

@@ -62,12 +62,14 @@ type Reconciler struct {
 	stackinator func() v1alpha1.StackInstaller
 	factory
 	executorInfoDiscoverer stacks.ExecutorInfoDiscoverer
+	allowedGroups          string
 }
 
 // Controller is responsible for adding the StackInstall
 // controller and its corresponding reconciler to the manager with any runtime configuration.
 type Controller struct {
 	StackInstallCreator func() (string, func() v1alpha1.StackInstaller)
+	AllowedGroups       string
 }
 
 // SetupWithManager creates a new Controller and adds it to the Manager with default RBAC. The Manager will set fields on the Controller
@@ -85,6 +87,7 @@ func (c *Controller) SetupWithManager(mgr ctrl.Manager) error {
 		stackinator:            stackInstaller,
 		factory:                &handlerFactory{},
 		executorInfoDiscoverer: discoverer,
+		allowedGroups:          c.AllowedGroups,
 	}
 	return ctrl.NewControllerManagedBy(mgr).
 		Named(controllerName).
@@ -114,7 +117,7 @@ func (r *Reconciler) Reconcile(req reconcile.Request) (reconcile.Result, error) 
 		return fail(ctx, r.kube, stackInstaller, err)
 	}
 
-	handler := r.factory.newHandler(ctx, stackInstaller, r.kube, r.kubeclient, executorinfo)
+	handler := r.factory.newHandler(ctx, stackInstaller, r.kube, r.kubeclient, executorinfo, r.allowedGroups)
 
 	if meta.WasDeleted(stackInstaller) {
 		return handler.delete(ctx)
@@ -133,21 +136,22 @@ type handler interface {
 
 // stackInstallHandler is a concrete implementation of the handler interface
 type stackInstallHandler struct {
-	kube         client.Client
-	jobCompleter jobCompleter
-	executorInfo *stacks.ExecutorInfo
-	ext          v1alpha1.StackInstaller
+	kube          client.Client
+	jobCompleter  jobCompleter
+	executorInfo  *stacks.ExecutorInfo
+	ext           v1alpha1.StackInstaller
+	allowedGroups string
 }
 
 // factory is an interface for creating new handlers
 type factory interface {
-	newHandler(context.Context, v1alpha1.StackInstaller, client.Client, kubernetes.Interface, *stacks.ExecutorInfo) handler
+	newHandler(context.Context, v1alpha1.StackInstaller, client.Client, kubernetes.Interface, *stacks.ExecutorInfo, string) handler
 }
 
 type handlerFactory struct{}
 
 func (f *handlerFactory) newHandler(ctx context.Context, ext v1alpha1.StackInstaller,
-	kube client.Client, kubeclient kubernetes.Interface, ei *stacks.ExecutorInfo) handler {
+	kube client.Client, kubeclient kubernetes.Interface, ei *stacks.ExecutorInfo, allowedGroups string) handler {
 
 	return &stackInstallHandler{
 		ext:          ext,
@@ -159,6 +163,7 @@ func (f *handlerFactory) newHandler(ctx context.Context, ext v1alpha1.StackInsta
 				Client: kubeclient,
 			},
 		},
+		allowedGroups: allowedGroups,
 	}
 }
 
@@ -187,7 +192,7 @@ func (h *stackInstallHandler) create(ctx context.Context) (reconcile.Result, err
 
 	if jobRef == nil {
 		// there is no install job created yet, create it now
-		job := createInstallJob(h.ext, h.executorInfo)
+		job := createInstallJob(h.ext, h.executorInfo, h.allowedGroups)
 		if err := h.kube.Create(ctx, job); err != nil {
 			return fail(ctx, h.kube, h.ext, err)
 		}
