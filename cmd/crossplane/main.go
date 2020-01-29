@@ -60,11 +60,11 @@ func main() {
 		// The SM runs as a separate pod from the main Crossplane pod because in order to install stacks that
 		// have arbitrary permissions, the SM itself must have cluster-admin permissions.  We isolate these elevated
 		// permissions as much as possible by running the Crossplane stack manager in its own isolate deployment.
-		extCmd = app.Command("stack", "Perform operations on stacks")
+		stackCmd = app.Command("stack", "Perform operations on stacks")
 
 		// stack manage - adds the stack manager controllers and starts their reconcile loops
-		extManageCmd     = extCmd.Command("manage", "Manage stacks (run stack manager controllers)")
-		supportTemplates = extManageCmd.Flag("templates", "Enable support for template stacks").Bool()
+		stackManageCmd     = stackCmd.Command("manage", "Manage stacks (run stack manager controllers)")
+		supportTemplates = stackManageCmd.Flag("templates", "Enable support for template stacks").Bool()
 
 		// stack unpack - performs the unpacking operation for the given stack package content
 		// directory. This command is expected to parse the content and generate manifests for stack
@@ -73,10 +73,10 @@ func main() {
 		//
 		// Users are not expected to run this command themselves, the stack manager itself should
 		// execute this command.
-		extUnpackCmd             = extCmd.Command("unpack", "Unpack a stack")
-		extUnpackDir             = extUnpackCmd.Flag("content-dir", "The absolute path of the directory that contains the stack contents").Required().String()
-		extUnpackOutfile         = extUnpackCmd.Flag("outfile", "The file where the YAML Stack record and CRD artifacts will be written").String()
-		extUnpackPermissionScope = extUnpackCmd.Flag("permission-scope", "The permission-scope that the stack must request (Namespaced, Cluster)").Default("Namespaced").String()
+		stackUnpackCmd             = stackCmd.Command("unpack", "Unpack a stack")
+		stackUnpackDir             = stackUnpackCmd.Flag("content-dir", "The absolute path of the directory that contains the stack contents").Required().String()
+		stackUnpackOutfile         = stackUnpackCmd.Flag("outfile", "The file where the YAML Stack record and CRD artifacts will be written").String()
+		stackUnpackPermissionScope = stackUnpackCmd.Flag("permission-scope", "The permission-scope that the stack must request (Namespaced, Cluster)").Default("Namespaced").String()
 	)
 	cmd := kingpin.MustParse(app.Parse(os.Args[1:]))
 
@@ -101,7 +101,7 @@ func main() {
 		// Start the Cmd
 		log.Info("Starting the manager")
 		kingpin.FatalIfError(mgr.Start(signals.SetupSignalHandler()), "Cannot start controller")
-	case extManageCmd.FullCommand():
+	case stackManageCmd.FullCommand():
 		// the "stacks manage" command is being run, the only controllers we should add to the
 		// manager are the stacks controllers
 
@@ -118,13 +118,13 @@ func main() {
 		// Start the Cmd
 		log.Info("Starting the manager")
 		kingpin.FatalIfError(mgr.Start(signals.SetupSignalHandler()), "Cannot start controller")
-	case extUnpackCmd.FullCommand():
+	case stackUnpackCmd.FullCommand():
 		var outFile io.StringWriter
 		// stack unpack command was called, run the stack unpacking logic
-		if extUnpackOutfile == nil || *extUnpackOutfile == "" {
+		if stackUnpackOutfile == nil || *stackUnpackOutfile == "" {
 			outFile = os.Stdout
 		} else {
-			openFile, err := os.Create(*extUnpackOutfile)
+			openFile, err := os.Create(*stackUnpackOutfile)
 			kingpin.FatalIfError(err, "Cannot create outfile")
 			defer closeOrError(openFile)
 			outFile = openFile
@@ -132,8 +132,8 @@ func main() {
 
 		// TODO(displague) afero.NewBasePathFs could avoid the need to track Base
 		fs := afero.NewOsFs()
-		rd := &walker.ResourceDir{Base: filepath.Clean(*extUnpackDir), Walker: afero.Afero{Fs: fs}}
-		kingpin.FatalIfError(stacks.Unpack(rd, outFile, rd.Base, *extUnpackPermissionScope), "failed to unpack stacks")
+		rd := &walker.ResourceDir{Base: filepath.Clean(*stackUnpackDir), Walker: afero.Afero{Fs: fs}}
+		kingpin.FatalIfError(stacks.Unpack(rd, outFile, rd.Base, *stackUnpackPermissionScope), "failed to unpack stacks")
 	default:
 		kingpin.FatalUsage("unknown command %s", cmd)
 	}
