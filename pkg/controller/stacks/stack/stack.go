@@ -196,20 +196,25 @@ func (h *stackHandler) crdListsDiffer(crds []apiextensions.CustomResourceDefinit
 	return len(crds) != len(h.ext.Spec.CRDs)
 }
 
-// crdsFromStack fetches the CRDs of the Stack using the shared parent labels
-// TODO(displague) change this to use GET on each, the CRDs may not be ready
-func (h *stackHandler) crdsFromStack(ctx context.Context) ([]apiextensions.CustomResourceDefinition, error) {
-	// Fetch CRDs because h.ext.Spec.CRDs doesn't have plural names
-	crds := &apiextensions.CustomResourceDefinitionList{}
+func (h *stackHandler) stackLabels() map[string]string {
 	stackLabels := h.ext.GetLabels()
-	if err := h.kube.List(ctx, crds, client.MatchingLabels(map[string]string{
+
+	return map[string]string{
 		stacks.LabelParentGroup:     stackLabels[stacks.LabelParentGroup],
 		stacks.LabelParentKind:      stackLabels[stacks.LabelParentKind],
 		stacks.LabelParentName:      stackLabels[stacks.LabelParentName],
 		stacks.LabelParentNamespace: stackLabels[stacks.LabelParentNamespace],
 		stacks.LabelParentUID:       stackLabels[stacks.LabelParentUID],
 		stacks.LabelParentVersion:   stackLabels[stacks.LabelParentVersion],
-	})); err != nil {
+	}
+}
+
+// crdsFromStack fetches the CRDs of the Stack using the shared parent labels
+// TODO(displague) change this to use GET on each, the CRDs may not be ready
+func (h *stackHandler) crdsFromStacks(ctx context.Context, stackLabels map[string]string) ([]apiextensions.CustomResourceDefinition, error) {
+	// Fetch CRDs because h.ext.Spec.CRDs doesn't have plural names
+	crds := &apiextensions.CustomResourceDefinitionList{}
+	if err := h.kube.List(ctx, crds, client.MatchingLabels(stackLabels)); err != nil {
 		return nil, errors.Wrap(err, "failed to list crds")
 	}
 
@@ -223,7 +228,8 @@ func (h *stackHandler) crdsFromStack(ctx context.Context) ([]apiextensions.Custo
 // createPersonaClusterRoles creates admin, edit, and view clusterroles that are
 // namespace+stack+version specific
 func (h *stackHandler) createPersonaClusterRoles(ctx context.Context, labels map[string]string) error {
-	crds, err := h.crdsFromStack(ctx)
+	stackLabels := h.stackLabels()
+	crds, err := h.crdsFromStacks(ctx, stackLabels)
 	if err != nil {
 		return err
 	}
@@ -393,6 +399,13 @@ func (h *stackHandler) createDeploymentClusterRole(ctx context.Context, labels m
 		Rules: h.ext.Spec.Permissions.Rules,
 	}
 
+	// TODO(displague) validateDeploymentClusterRoles could take
+	// rbacv1.ClusterRole instead of using stackHandler to get rules.
+	// would this be easier to test?
+	if err := h.validateDeploymentClusterRoles(ctx); err != nil {
+		return "", errors.Wrap(err, "failed to validate cluster role")
+	}
+
 	if err := h.kube.Create(ctx, cr); err != nil && !kerrors.IsAlreadyExists(err) {
 		return "", errors.Wrap(err, "failed to create cluster role")
 	}
@@ -435,6 +448,63 @@ func (h *stackHandler) createClusterRoleBinding(ctx context.Context, clusterRole
 		return errors.Wrap(err, "failed to create cluster role binding")
 	}
 	return nil
+}
+
+func (h *stackHandler) validateDeploymentClusterRoles(ctx context.Context) error {
+	// Acceptable rules are limitted to owned resources of in-namespace stacks
+	// and owned resources of cluster scoped stacks.
+	// Stacks with cluster scoped CRDs are themselves namespaced, as such these
+	// Stacks can not be listed across namespaces, so we query the CRDs.
+	// Additional APIGroups can be permitted through the command line.
+	crds := apiextensions.CustomResourceDefinitionList{}
+
+	// label selector that matches all stacks, this takes for granted that
+	// clusterstackinstalls and stackinstalls share the same group
+	// other options when considering optimizations:
+	// crossplane.io/scope: {namespace | environment}
+	// namespace.crossplane.io/{theStackNamespace}: "true"
+
+	allStacksLabels := map[string]string{
+		stacks.LabelParentGroup: v1alpha1.StackGroupVersionKind.Group,
+	}
+	if err := h.kube.List(ctx, &crds, client.MatchingLabels(allStacksLabels)); err != nil {
+		return errors.Wrap(err, "failed to list all stack crds")
+	}
+
+permit:
+	for _, rule := range h.ext.Spec.Permissions.Rules {
+		// TODO(displague) check the command line arg permitted groups
+
+		for _, crd := range crds.Items {
+			labels := crd.GetLabels()
+			if crd.Spec.Scope == apiextensions.NamespaceScoped &&
+				(!h.isNamespaced() || labels["namespace.crossplane.io/"+h.ext.GetNamespace()] != "true") {
+				// TODO(displague) process namespaced resources in the same
+				// loop, or a separate one?
+				continue permit
+			}
+
+			// TODO(displague) permit apigroup="", resources: configmaps,events,secrets
+
+			if contains(rule.APIGroups, crd.Spec.Group) {
+				// TODO(displague) filter on resources and subresources
+				continue permit
+			}
+
+		}
+
+		return errors.New(fmt.Sprintf("could not find installed crd for dependency: %v", rule))
+	}
+	return nil
+}
+
+func contains(list []string, s string) bool {
+	for _, t := range list {
+		if t == s {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *stackHandler) processRBAC(ctx context.Context) error {
