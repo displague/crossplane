@@ -115,6 +115,13 @@ type StackGroup struct {
 	Category      string `json:"category"`
 }
 
+// UnpackJobOutput is the format emitted by the Unpack job
+type UnpackJobOutput struct {
+	Stack           *v1alpha1.Stack                           `json:"stack,omitempty"`
+	StackDefinition *v1alpha1.StackDefinition                 `json:"stackdefinition,omitempty"`
+	CRDs            []*apiextensions.CustomResourceDefinition `json:"crds,omitempty"`
+}
+
 // StackPackager implentations can build a stack from Stack resources and emit the Yaml artifact
 type StackPackager interface {
 	SetApp(v1alpha1.AppMetadataSpec)

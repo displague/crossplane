@@ -20,19 +20,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"path/filepath"
-	"strings"
 
+	"github.com/ghodss/yaml"
 	"github.com/pkg/errors"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/crossplaneio/crossplane-runtime/pkg/logging"
@@ -59,6 +55,11 @@ type stackInstallJobCompleter struct {
 	hostClient   client.Client
 	podLogReader Reader
 	log          logging.Logger
+}
+
+type metaV1RuntimeObject interface {
+	metav1.Object
+	runtime.Object
 }
 
 func createInstallJob(i v1alpha1.StackInstaller, executorInfo *stacks.ExecutorInfo, hCfg *hosted.Config, tscImage string) *batchv1.Job {
@@ -139,28 +140,27 @@ func (jc *stackInstallJobCompleter) handleJobCompletion(ctx context.Context, i s
 		return err
 	}
 
-	// read full output from job by retrieving the logs for the job's pod
-	b, err := jc.readPodLogs(job.Namespace, podName)
+	podLogs, err := jc.podLogReader.GetReader(job.Namespace, podName)
+
 	if err != nil {
 		return err
 	}
 
-	// decode and process all resources from job output
-	d := yaml.NewYAMLOrJSONDecoder(b, 4096)
-	for {
-		obj := &unstructured.Unstructured{}
-		if err := d.Decode(&obj); err != nil {
-			if err == io.EOF {
-				// we reached the end of the job output
-				break
-			}
-			return errors.Wrapf(err, "failed to parse output from job %s", job.Name)
-		}
+	buf := &bytes.Buffer{}
+	if _, err := buf.ReadFrom(podLogs); err != nil {
+		return err
+	}
+	b := buf.Bytes()
 
-		// process and create the object that we just decoded
-		if err := jc.createJobOutputObject(ctx, obj, i, job); err != nil {
-			return err
-		}
+	o := &stacks.UnpackJobOutput{}
+	// decode and process all resources from job output
+	if err := yaml.Unmarshal(b, o); err != nil {
+		return err
+	}
+
+	// process and create the object that we just decoded
+	if err := jc.createJobOutputObjects(ctx, o, i, job); err != nil {
+		return err
 	}
 
 	return nil
@@ -194,25 +194,10 @@ func (jc *stackInstallJobCompleter) findPodsForJob(ctx context.Context, job *bat
 	return podList, nil
 }
 
-func (jc *stackInstallJobCompleter) readPodLogs(namespace, name string) (*bytes.Buffer, error) {
-	podLogs, err := jc.podLogReader.GetReader(namespace, name)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get logs request stream from pod %s", name)
-	}
-	defer func() { _ = podLogs.Close() }()
-
-	b := new(bytes.Buffer)
-	if _, err = io.Copy(b, podLogs); err != nil {
-		return nil, errors.Wrapf(err, "failed to copy logs request stream from pod %s", name)
-	}
-
-	return b, nil
-}
-
-// createJobOutputObject names, labels, and creates resources in the API
+// createJobOutputObjects names, labels, and creates resources in the API
 // Expected resources are CRD, Stack, StackDefinition, & StackConfiguration
 // nolint:gocyclo
-func (jc *stackInstallJobCompleter) createJobOutputObject(ctx context.Context, obj *unstructured.Unstructured,
+func (jc *stackInstallJobCompleter) createJobOutputObjects(ctx context.Context, obj *stacks.UnpackJobOutput,
 	i stacks.KindlyIdentifier, job *batchv1.Job) error {
 
 	// if we decoded a non-nil unstructured object, try to create it now
@@ -220,108 +205,92 @@ func (jc *stackInstallJobCompleter) createJobOutputObject(ctx context.Context, o
 		return nil
 	}
 
-	// when the current object is a Stack object, make sure the name and namespace are
-	// set to match the current StackInstall (if they haven't already been set). Also,
-	// set the owner reference of the Stack to be the StackInstall.
-	if isStackObject(obj) || isStackDefinitionObject(obj) || isStackConfigurationObject(obj) {
-		if obj.GetName() == "" {
-			obj.SetName(i.GetName())
+	// We want to clean up any installed resources when we're deleted. We can't
+	// rely on garbage collection because a namespaced object (StackInstall)
+	// can't own a cluster scoped object (CustomResourceDefinition), so we use
+	// labels instead.
+	labels := stacks.ParentLabels(i)
+
+	// make sure the name and namespace are set to match the current
+	// StackInstall (if they haven't already been set)
+	if obj.Stack != nil {
+		o := obj.Stack
+		if o.GetName() == "" {
+			o.SetName(i.GetName())
 		}
-		if obj.GetNamespace() == "" {
-			obj.SetNamespace(i.GetNamespace())
+		if o.GetNamespace() == "" {
+			o.SetNamespace(i.GetNamespace())
 		}
+
+		meta.AddLabels(o, labels)
+	}
+
+	if obj.StackDefinition != nil {
+		o := obj.StackDefinition
+		if o.GetName() == "" {
+			o.SetName(i.GetName())
+		}
+		if o.GetNamespace() == "" {
+			o.SetNamespace(i.GetNamespace())
+		}
+
+		meta.AddLabels(o, labels)
 	}
 
 	// StackDefinition controllers need the name of the StackDefinition
 	// which, by design, matches the StackInstall
-	if isStackDefinitionObject(obj) {
-		if err := setStackDefinitionControllerEnv(obj, i.GetNamespace(), i.GetName()); err != nil {
-			return err
-		}
+	if obj.StackDefinition != nil {
+		setStackDefinitionControllerEnv(obj.StackDefinition, i.GetNamespace(), i.GetName())
 	}
-
-	// We want to clean up any installed CRDS when we're deleted. We can't rely
-	// on garbage collection because a namespaced object (StackInstall) can't
-	// own a cluster scoped object (CustomResourceDefinition), so we use labels
-	// instead.
-	labels := stacks.ParentLabels(i)
 
 	// CRDs are labeled with the namespaces of the stacks they are managed by.
 	// This will allow for a single Namespaced stack to be installed in multiple
 	// namespaces, or different stacks (possibly only differing by versions) to
 	// provide the same CRDs without the risk that a single StackInstall removal
 	// will delete a CRD until there are no remaining namespace labels.
-	if isCRDObject(obj) {
+	for _, crd := range obj.CRDs {
+		if crd == nil {
+			continue
+		}
+		meta.AddLabels(crd, labels)
+
 		labelNamespace := fmt.Sprintf(stacks.LabelNamespaceFmt, i.GetNamespace())
 
-		labels[labelNamespace] = "true"
+		nsLabels := map[string]string{labelNamespace: "true"}
+		meta.AddLabels(crd, nsLabels)
 	}
 
-	meta.AddLabels(obj, labels)
+	objs := append([]metaV1RuntimeObject{}, obj.Stack, obj.StackDefinition)
 
-	jc.log.Debug(
-		"creating object from job output",
-		"job", job.Name,
-		"name", obj.GetName(),
-		"namespace", obj.GetNamespace(),
-		"apiVersion", obj.GetAPIVersion(),
-		"kind", obj.GetKind(),
-		"labels", labels,
-	)
-	if err := jc.client.Create(ctx, obj); err != nil && !kerrors.IsAlreadyExists(err) {
-		return errors.Wrapf(err, "failed to create object %s from job output %s", obj.GetName(), job.Name)
+	for _, c := range obj.CRDs {
+		objs = append(objs, c)
 	}
 
+	for _, o := range objs {
+		if o == nil {
+			continue
+		}
+
+		/*
+			jc.log.Debug(
+				"creating object from job output",
+				"job", job.Name,
+				"name", o.GetName(),
+				"namespace", o.GetNamespace(),
+				"apiVersion", o.GetAPIVersion(),
+				"kind", o.GetKind(),
+				"labels", o.GetLabels(),
+			)
+		*/
+
+		if err := jc.client.Create(ctx, o); err != nil && !kerrors.IsAlreadyExists(err) {
+			return errors.Wrapf(err, "failed to create object %s from job output %s", o.GetName(), job.Name)
+		}
+	}
 	return nil
 }
 
-func isStackObject(obj *unstructured.Unstructured) bool {
-	if obj == nil {
-		return false
-	}
-
-	gvk := obj.GroupVersionKind()
-	return gvk.Group == v1alpha1.Group && gvk.Version == v1alpha1.Version &&
-		strings.EqualFold(gvk.Kind, v1alpha1.StackKind)
-}
-
-func isStackDefinitionObject(obj *unstructured.Unstructured) bool {
-	if obj == nil {
-		return false
-	}
-
-	gvk := obj.GroupVersionKind()
-
-	return gvk.Group == v1alpha1.Group && gvk.Version == v1alpha1.Version &&
-		strings.EqualFold(gvk.Kind, v1alpha1.StackDefinitionKind)
-}
-
-func isStackConfigurationObject(obj *unstructured.Unstructured) bool {
-	if obj == nil {
-		return false
-	}
-
-	gvk := obj.GroupVersionKind()
-
-	if gvk.Group == v1alpha1.Group && gvk.Version == v1alpha1.Version &&
-		strings.EqualFold(gvk.Kind, v1alpha1.StackConfigurationKind) {
-		return true
-	}
-
-	return false
-}
-
-func isCRDObject(obj runtime.Object) bool {
-	if obj == nil {
-		return false
-	}
-	gvk := obj.GetObjectKind().GroupVersionKind()
-
-	return apiextensions.SchemeGroupVersion == gvk.GroupVersion() &&
-		strings.EqualFold(gvk.Kind, "CustomResourceDefinition")
-}
-
-func setStackDefinitionControllerEnv(obj *unstructured.Unstructured, namespace, name string) error {
+func setStackDefinitionControllerEnv(sd *v1alpha1.StackDefinition, namespace, name string) {
 	env := []corev1.EnvVar{{
 		Name:  stacks.StackDefinitionNamespaceEnv,
 		Value: namespace,
@@ -330,41 +299,9 @@ func setStackDefinitionControllerEnv(obj *unstructured.Unstructured, namespace, 
 		Value: name,
 	}}
 
-	// use convert functions because SetUnstructuredContent is unwieldy
-	sd, err := convertToStackDefinition(obj)
-	if err != nil {
-		return err
-	}
-
 	if d := sd.Spec.Controller.Deployment; d != nil {
 		c := d.Spec.Template.Spec.Containers
 		c[0].Env = append(c[0].Env, env...)
-
-		if u, err := convertToUnstructured(sd); err == nil {
-			u.DeepCopyInto(obj)
-		}
 	}
 
-	return err
-}
-
-// convertToUnstructured takes a Kubernetes object and converts it into
-// *unstructured.Unstructured that can be used as KubernetesApplication template.
-func convertToUnstructured(o *v1alpha1.StackDefinition) (*unstructured.Unstructured, error) {
-	u, err := runtime.DefaultUnstructuredConverter.ToUnstructured(o)
-	if err != nil {
-		return nil, err
-	}
-
-	return &unstructured.Unstructured{Object: u}, nil
-}
-
-// convertToStackDefinition takes a Kubernetes object and converts it into
-// *v1alpha1.StackDefinition
-func convertToStackDefinition(o *unstructured.Unstructured) (*v1alpha1.StackDefinition, error) {
-	sd := &v1alpha1.StackDefinition{}
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(o.UnstructuredContent(), sd); err != nil {
-		return &v1alpha1.StackDefinition{}, err
-	}
-	return sd, nil
 }

@@ -29,8 +29,8 @@ import (
 	"github.com/pkg/errors"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -193,21 +193,21 @@ func job(jm ...jobModifier) *batchv1.Job {
 	return j
 }
 
-// unstructuredObj modifiers
-type unstructuredObjModifier func(*unstructured.Unstructured)
+// crdObj modifiers
+type crdObjModifier func(*apiextensions.CustomResourceDefinition)
 
-// withUnstructuredObjLabels modifies an existing unstructured object with the given labels
-func withUnstructuredObjLabels(labels map[string]string) unstructuredObjModifier {
-	return func(u *unstructured.Unstructured) {
-		meta.AddLabels(u, labels)
+// withCRDObjLabels modifies an existing unstructured object with the given labels
+func withCRDObjLabels(labels map[string]string) crdObjModifier {
+	return func(crd *apiextensions.CustomResourceDefinition) {
+		meta.AddLabels(crd, labels)
 	}
 }
 
-// unstructuredObj creates a new default unstructured object (derived from the crdRaw const)
-func unstructuredObj(uom ...unstructuredObjModifier) *unstructured.Unstructured {
+// crdObj creates a new default unstructured object (derived from the crdRaw const)
+func crdObj(uom ...crdObjModifier) *apiextensions.CustomResourceDefinition {
 	r := strings.NewReader(crdRaw)
 	d := yaml.NewYAMLOrJSONDecoder(r, 4096)
-	obj := &unstructured.Unstructured{}
+	obj := &apiextensions.CustomResourceDefinition{}
 	d.Decode(&obj)
 
 	for _, m := range uom {
@@ -374,7 +374,7 @@ func TestHandleJobCompletion(t *testing.T) {
 				client: &test.MockClient{
 					MockCreate: func(ctx context.Context, obj runtime.Object, _ ...client.CreateOption) error {
 						if isCRDObject(obj) {
-							if crd, ok := obj.(*unstructured.Unstructured); ok {
+							if crd, ok := obj.(*apiextensions.CustomResourceDefinition); ok {
 								if labels := crd.GetLabels(); labels == nil || labels["namespace.crossplane.io/"+namespace] != "true" {
 									return errors.New("expected CRD namespace label")
 								}
@@ -676,7 +676,7 @@ func TestCreate(t *testing.T) {
 	}
 }
 
-func TestCreateJobOutputObject(t *testing.T) {
+func TestCreateJobOutputObjects(t *testing.T) {
 	wantLabels := map[string]string{
 		stacks.LabelParentGroup:                          "stacks.crossplane.io",
 		stacks.LabelParentVersion:                        "v1alpha1",
@@ -689,7 +689,7 @@ func TestCreateJobOutputObject(t *testing.T) {
 
 	type want struct {
 		err error
-		obj *unstructured.Unstructured
+		obj *apiextensions.CustomResourceDefinition
 	}
 
 	tests := []struct {
@@ -697,7 +697,7 @@ func TestCreateJobOutputObject(t *testing.T) {
 		jobCompleter   *stackInstallJobCompleter
 		stackInstaller *v1alpha1.StackInstall
 		job            *batchv1.Job
-		obj            *unstructured.Unstructured
+		obj            *stacks.UnpackJobOutput
 		want           want
 	}{
 		{
@@ -728,10 +728,10 @@ func TestCreateJobOutputObject(t *testing.T) {
 			},
 			stackInstaller: resource(),
 			job:            job(),
-			obj:            unstructuredObj(withUnstructuredObjLabels(wantLabels)),
+			obj:            &stacks.UnpackJobOutput{CRDs: []*apiextensions.CustomResourceDefinition{crdObj(withCRDObjLabels(wantLabels))}},
 			want: want{
 				err: errors.Wrapf(errBoom, "failed to create object mytypes.samples.upbound.io from job output cool-stackinstall"),
-				obj: unstructuredObj(withUnstructuredObjLabels(wantLabels)),
+				obj: crdObj(withCRDObjLabels(wantLabels)),
 			},
 		},
 		{
@@ -744,10 +744,10 @@ func TestCreateJobOutputObject(t *testing.T) {
 			},
 			stackInstaller: resource(),
 			job:            job(),
-			obj:            unstructuredObj(),
+			obj:            &stacks.UnpackJobOutput{CRDs: []*apiextensions.CustomResourceDefinition{crdObj()}},
 			want: want{
 				err: nil,
-				obj: unstructuredObj(withUnstructuredObjLabels(wantLabels)),
+				obj: crdObj(withCRDObjLabels(wantLabels)),
 			},
 		},
 	}
@@ -756,15 +756,25 @@ func TestCreateJobOutputObject(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotErr := tt.jobCompleter.createJobOutputObject(ctx, tt.obj, tt.stackInstaller, tt.job)
+			gotErr := tt.jobCompleter.createJobOutputObjects(ctx, tt.obj, tt.stackInstaller, tt.job)
 
 			if diff := cmp.Diff(tt.want.err, gotErr, test.EquateErrors()); diff != "" {
-				t.Errorf("createJobOutputObject(): -want error, +got error:\n%s", diff)
+				t.Errorf("createJobOutputObjects(): -want error, +got error:\n%s", diff)
 			}
 
 			if diff := cmp.Diff(tt.want.obj, tt.obj, test.EquateConditions()); diff != "" {
-				t.Errorf("createJobOutputObject(): -want obj, +got obj:\n%v", diff)
+				t.Errorf("createJobOutputObjects(): -want obj, +got obj:\n%v", diff)
 			}
 		})
 	}
+}
+
+func isCRDObject(obj runtime.Object) bool {
+	if obj == nil {
+		return false
+	}
+	gvk := obj.GetObjectKind().GroupVersionKind()
+
+	return apiextensions.SchemeGroupVersion == gvk.GroupVersion() &&
+		strings.EqualFold(gvk.Kind, "CustomResourceDefinition")
 }
